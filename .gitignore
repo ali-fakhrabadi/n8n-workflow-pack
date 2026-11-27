@@ -1,0 +1,17 @@
+# Secrets and local configuration: never committed.
+secrets/
+.env
+
+# Python / Node
+__pycache__/
+*.py[cod]
+.ruff_cache/
+node_modules/
+
+# Harness run output (results worth keeping are copied into docs/results/)
+tests/harness/out/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
