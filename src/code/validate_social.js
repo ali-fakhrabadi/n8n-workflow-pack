@@ -29,16 +29,14 @@ const length = [...text].length;
 if (length > CHANNEL_LIMITS[channel]) {
   return fail(`text is ${length} characters; ${channel} allows ${CHANNEL_LIMITS[channel]}`);
 }
+// The task runner's sandbox has no URL class, so the URL is checked with a pattern.
 let mediaUrl = null;
 if (body.media_url !== undefined && body.media_url !== null && body.media_url !== '') {
-  let parsed;
-  try {
-    parsed = new URL(String(body.media_url));
-  } catch {
-    return fail('media_url is not a URL');
-  }
-  if (parsed.protocol !== 'https:') return fail('media_url must use https');
-  mediaUrl = parsed.toString();
+  const raw = String(body.media_url).trim();
+  const parts = raw.match(/^([a-z][a-z0-9+.-]*):\/\/([^\s/?#@]+)([/?#]\S*)?$/i);
+  if (!parts || raw.length > 2000) return fail('media_url is not a URL');
+  if (parts[1].toLowerCase() !== 'https') return fail('media_url must use https');
+  mediaUrl = raw;
 }
 const requestedBy = typeof body.requested_by === 'string' ? body.requested_by.trim().slice(0, 120) : '';
 

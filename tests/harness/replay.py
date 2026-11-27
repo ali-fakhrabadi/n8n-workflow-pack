@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -55,13 +56,15 @@ def secret(name: str) -> str:
     return Path(f"/run/secrets/{name}").read_text(encoding="utf-8").strip()
 
 
-def http(method: str, url: str, body: Any = None, headers: dict[str, str] | None = None) -> tuple[int, Any, dict[str, str]]:
+def http(
+    method: str, url: str, body: Any = None, headers: dict[str, str] | None = None
+) -> tuple[int, Any, dict[str, str]]:
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(  # noqa: S310 - fixed harness URLs on an internal network
+    req = urllib.request.Request(
         url, data=data, method=method, headers={"Content-Type": "application/json", **(headers or {})}
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=60) as resp:
             text, status, hdrs = resp.read().decode(), resp.status, dict(resp.headers.items())
     except urllib.error.HTTPError as exc:
         text, status, hdrs = exc.read().decode(), exc.code, dict(exc.headers.items())
@@ -75,7 +78,9 @@ def http(method: str, url: str, body: Any = None, headers: dict[str, str] | None
 
 def event_key(event: dict[str, Any], payload: dict[str, Any] | None = None) -> str | None:
     p = payload or event["payload"]
-    raw = {"social": p.get("request_id"), "email": p.get("message_id"), "lead": p.get("submission_id")}[event["workflow"]]
+    raw = {"social": p.get("request_id"), "email": p.get("message_id"), "lead": p.get("submission_id")}[
+        event["workflow"]
+    ]
     if not isinstance(raw, str) or not raw.strip():
         return None
     return raw.strip().strip("<>").lower() if event["workflow"] == "email" else raw.strip()
@@ -102,8 +107,11 @@ def messages(key: str, kind: str | None = None) -> list[dict[str, Any]]:
     return [
         c["body"]
         for c in mock_calls()
-        if c["step"] == "chat" and isinstance(c.get("body"), dict) and c["body"].get("key") == key
-        and (kind is None or c["body"].get("kind") == kind) and 200 <= c["status"] < 300
+        if c["step"] == "chat"
+        and isinstance(c.get("body"), dict)
+        and c["body"].get("key") == key
+        and (kind is None or c["body"].get("kind") == kind)
+        and 200 <= c["status"] < 300
     ]
 
 
@@ -246,6 +254,14 @@ def run_event(event: dict[str, Any]) -> dict[str, Any]:
             for item in event.get("script", []):
                 script(item["step"], key, [])
             result["redelivery_response"] = deliver(event, event["payload"])[0]
+            if workflow == "social":
+                # A rerun is a new request: it asks for approval again, and the reviewer approves.
+                again = wait_for(lambda: (lambda m: m if len(m) >= 2 else None)(messages(key, "approval_request")), 60)
+                result["approval_requests_after_redelivery"] = len(again or [])
+                if again:
+                    with COUNT_LOCK:
+                        COUNTS["approval_clicks"] += 1
+                    result["redelivery_click"] = http("GET", again[-1]["approve_url"])[0]
             done = wait_for(lambda: messages(key, "run_finished"), EVENT_TIMEOUT_S) or []
             result["redelivery_status"] = done[-1]["status"] if done else None
             result["redelivery_n8n_status"] = API.status(done[-1].get("execution_id")) if done and API else None
@@ -289,8 +305,20 @@ def check(r: dict[str, Any], event: dict[str, Any], ledger: dict[tuple[str, str]
     else:
         want("run ended with", (r.get("ended_with") or [None])[0], end)
         want("n8n execution status", r.get("n8n_status"), "success" if end == "run_finished" else "error")
-    for field in ("run_status", "writes", "emails", "crm_contacts", "row_status", "tab", "approval_requests",
-                  "redelivery_response", "redelivery_status", "second_response", "second_status"):
+    for field in (
+        "run_status",
+        "writes",
+        "emails",
+        "crm_contacts",
+        "row_status",
+        "tab",
+        "approval_requests",
+        "redelivery_response",
+        "approval_requests_after_redelivery",
+        "redelivery_status",
+        "second_response",
+        "second_status",
+    ):
         if field in e:
             want(field, r.get(field), e[field])
     if "write_attempts" in e:
@@ -338,10 +366,13 @@ def replay() -> int:
     if start_ms and finished:
         start = int(start_ms) / 1000
         ready = int(os.environ["HARNESS_READY_MS"]) / 1000
-        setup_done = os.environ.get("HARNESS_SETUP_DONE", "")
+        # Docker gives nanoseconds ("...:05.123456789Z"); keep microseconds for fromisoformat.
+        setup_done = re.sub(r"(\.\d{6})\d*", r"\1", os.environ.get("HARNESS_SETUP_DONE", "")).replace("Z", "+00:00")
         timing = {
             "first_event": smoke["id"],
-            "import_to_setup_done_s": round(datetime.fromisoformat(setup_done.replace("Z", "+00:00")).timestamp() - start, 2) if setup_done else None,
+            "import_to_setup_done_s": round(datetime.fromisoformat(setup_done).timestamp() - start, 2)
+            if setup_done
+            else None,
             "import_to_ready_s": round(ready - start, 2),
             "import_to_first_success_s": round(finished[0]["ts"] - start, 2),
             "first_run_s": first["seconds"],
@@ -356,8 +387,10 @@ def replay() -> int:
     (OUT / "replay-results.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
     failed = {r["id"]: check(r, by_id[r["id"]], None) for r in results}
     bad = {k: v for k, v in failed.items() if v}
-    print(f"replayed {len(results)} events, {COUNTS['webhook_deliveries']} webhook deliveries; "
-          f"{len(results) - len(bad)} passed before the ledger check")
+    print(
+        f"replayed {len(results)} events, {COUNTS['webhook_deliveries']} webhook deliveries; "
+        f"{len(results) - len(bad)} passed before the ledger check"
+    )
     for k, v in bad.items():
         print(f"  FAIL {k}: {'; '.join(v)}")
     return 1 if bad else 0
@@ -379,7 +412,10 @@ def verify_ledger() -> int:
         "webhook_deliveries": data["counts"]["webhook_deliveries"],
         "approval_clicks": data["counts"]["approval_clicks"],
         "by_workflow": {
-            w: {"events": sum(r["workflow"] == w for r in report_rows), "passed": sum(r["passed"] and r["workflow"] == w for r in report_rows)}
+            w: {
+                "events": sum(r["workflow"] == w for r in report_rows),
+                "passed": sum(r["passed"] and r["workflow"] == w for r in report_rows),
+            }
             for w in ("social", "email", "lead")
         },
         "duplicate_tests": {

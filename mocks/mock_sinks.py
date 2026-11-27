@@ -63,7 +63,11 @@ def default(step: str, groups: tuple[str, ...], payload: Any, key: str) -> tuple
             return 422, {"error": {"code": "invalid_post", "message": "channel and text are required"}}
         post_id = f"post-{len(POSTS) + 1:04d}"
         POSTS.append({"id": post_id, "key": key, "channel": body["channel"], "text": body["text"], "ts": time.time()})
-        return 201, {"id": post_id, "url": f"https://social.example/{body['channel']}/{post_id}", "channel": body["channel"]}
+        return 201, {
+            "id": post_id,
+            "url": f"https://social.example/{body['channel']}/{post_id}",
+            "channel": body["channel"],
+        }
     if step == "sheets.append":
         tab = urllib.parse.unquote(groups[1]).split("!", 1)[0]
         values = body.get("values")
@@ -156,7 +160,9 @@ class Handler(BaseHTTPRequestHandler):
                 continue
             groups = match.groups()
             key = self.headers.get("Idempotency-Key") or (
-                str(payload.get("key")) if isinstance(payload, dict) and payload.get("key") else (groups[0] if groups else "-")
+                str(payload.get("key"))
+                if isinstance(payload, dict) and payload.get("key")
+                else (groups[0] if groups else "-")
             )
             with LOCK:
                 queue = SCRIPTS.get((step, key)) or SCRIPTS.get((step, "*"))
@@ -165,7 +171,11 @@ class Handler(BaseHTTPRequestHandler):
                 time.sleep(float(scripted["delay_s"]))
             with LOCK:
                 if scripted and "status" in scripted:
-                    status, body, headers = scripted["status"], scripted.get("body") or {}, scripted.get("headers") or {}
+                    status, body, headers = (
+                        scripted["status"],
+                        scripted.get("body") or {},
+                        scripted.get("headers") or {},
+                    )
                 else:
                     (status, body), headers = default(step, groups, payload, key), {}
                 CALLS.append(
@@ -228,12 +238,29 @@ def view() -> str:
         return time.strftime("%H:%M:%S", time.gmtime(ts))
 
     chat = [
-        [clock(m["ts"]), m.get("kind", ""), m.get("workflow") or m.get("ledger_workflow") or "", m.get("key") or "",
-         m.get("status") or m.get("message") or (m.get("text") or "")[:90]]
-        for m in MESSAGES[-40:]
+        [
+            clock(m["ts"]),
+            m.get("kind", ""),
+            m.get("workflow") or m.get("ledger_workflow") or "",
+            m.get("key") or "",
+            m.get("status") or m.get("message") or (m.get("text") or "")[:90],
+        ]
+        for m in MESSAGES[-12:]
     ]
     posts = [[clock(p["ts"]), p["id"], p["channel"], p["key"], p["text"][:90]] for p in POSTS]
-    sheet_head = ["message_id", "received_at", "from", "vendor", "invoice", "po", "amount", "currency", "due", "status", "issues"]
+    sheet_head = [
+        "message_id",
+        "received_at",
+        "from",
+        "vendor",
+        "invoice",
+        "po",
+        "amount",
+        "currency",
+        "due",
+        "status",
+        "issues",
+    ]
     tabs = "".join(f"<h3>Sheet tab: {e(tab)}</h3>" + table(sheet_head, rows) for tab, rows in sorted(ROWS.items()))
     crm = [[c["email"], c["name"], c["company"] or "", c["stage"], len(c["submissions"])] for c in CONTACTS.values()]
     return (
@@ -243,12 +270,16 @@ def view() -> str:
         "td,th{border:1px solid #d9e2ec;padding:5px 8px;text-align:left;vertical-align:top}"
         "th{background:#e9eff5}h2{margin-top:28px}</style>"
         "<h1>Mock downstream services</h1><p>Recorded by the test harness; no real accounts.</p>"
-        "<h2>Chat channel</h2>" + table(["time (UTC)", "kind", "workflow", "key", "detail"], chat)
-        + "<h2>Social posts published</h2>" + table(["time (UTC)", "post", "channel", "idempotency key", "text"], posts)
-        + "<h2>Spreadsheet</h2>" + (tabs or "<p>(no rows)</p>")
-        + "<h2>CRM contacts</h2>" + table(["email", "name", "company", "stage", "submissions"], crm)
+        "<h2>Chat channel (last 12 messages)</h2>"
+        + table(["time (UTC)", "kind", "workflow", "key", "detail"], chat)
+        + "<h2>Social posts published</h2>"
+        + table(["time (UTC)", "post", "channel", "idempotency key", "text"], posts)
+        + "<h2>Spreadsheet</h2>"
+        + (tabs or "<p>(no rows)</p>")
+        + "<h2>CRM contacts</h2>"
+        + table(["email", "name", "company", "stage", "submissions"], crm)
     )
 
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("0.0.0.0", 8000), Handler).serve_forever()  # noqa: S104
+    ThreadingHTTPServer(("0.0.0.0", 8000), Handler).serve_forever()

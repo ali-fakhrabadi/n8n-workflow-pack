@@ -1,0 +1,6 @@
+# Browser for tests/harness/screenshots.sh. The base image ships the browsers for the pinned
+# Playwright version; the Python package comes from a hash-checked lock file.
+FROM mcr.microsoft.com/playwright/python@sha256:330d401ae23c905896a0c26c66c36fc971b621519e7b11b435a8328d7bf6e031
+COPY requirements-screenshots.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --break-system-packages --require-hashes -r /tmp/requirements.txt
+USER pwuser

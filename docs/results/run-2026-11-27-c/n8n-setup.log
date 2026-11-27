@@ -1,0 +1,7 @@
+n8n-setup-1  | [pack-setup] 2026-11-27T02:55:59.719Z owner password hash written
+n8n-setup-1  | [pack-setup] 2026-11-27T02:55:59.744Z importing
+n8n-setup-1  | Migrations in progress, please do NOT stop the process.
+n8n-setup-1  | (node:13) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+n8n-setup-1  | (Use `node --trace-deprecation ...` to show where the warning was created)
+n8n-setup-1  | [pack-setup] 2026-11-27T02:56:44.658Z imported 4 credentials and 4 workflows; published 4
+n8n-setup-1  | [pack-setup] 2026-11-27T02:57:00.890Z workflows and credentials are up to date

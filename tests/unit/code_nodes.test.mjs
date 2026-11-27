@@ -28,11 +28,13 @@ async function run(file, { replace = {}, nodes = {}, json = {}, runIndex = 0 } =
     const item = { json: all[name] };
     return { first: () => item, last: () => item, item };
   };
-  const [item] = await new AsyncFunction('$', '$json', '$execution', '$runIndex', script)(
+  // URL is shadowed: n8n's task runner sandbox does not provide it (found by the harness).
+  const [item] = await new AsyncFunction('$', '$json', '$execution', '$runIndex', 'URL', script)(
     $,
     json,
     { id: '42', resumeUrl: RESUME },
     runIndex,
+    undefined,
   );
   return item.json;
 }
@@ -71,8 +73,11 @@ test('social: rejects unknown channels, empty text, bad ids and control characte
 test('social: media_url must be https', async () => {
   assert.match((await social({ request_id: 'a', channel: 'x', text: 'hi', media_url: 'http://cdn.example.com/a.png' })).reason, /https/);
   assert.match((await social({ request_id: 'a', channel: 'x', text: 'hi', media_url: 'not a url' })).reason, /not a URL/);
-  const ok = await social({ request_id: 'a', channel: 'x', text: 'hi', media_url: 'https://cdn.example.com/a.png' });
-  assert.equal(ok.post.media_url, 'https://cdn.example.com/a.png');
+  assert.match((await social({ request_id: 'a', channel: 'x', text: 'hi', media_url: 'https://user@cdn.example.com/a' })).reason, /not a URL/);
+  assert.match((await social({ request_id: 'a', channel: 'x', text: 'hi', media_url: 'https://cdn.example.com/a b.png' })).reason, /not a URL/);
+  const ok = await social({ request_id: 'a', channel: 'x', text: 'hi', media_url: 'https://cdn.example.com/a.png?v=2' });
+  assert.equal(ok.post.media_url, 'https://cdn.example.com/a.png?v=2');
+  assert.equal((await social({ request_id: 'a', channel: 'x', text: 'hi', media_url: 'HTTPS://cdn.example.com' })).valid, true);
 });
 
 test('approval message: links are the resume URL plus a decision, token kept', async () => {

@@ -12,6 +12,7 @@ credentials by id and name, and setup/setup.mjs creates them from secrets.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import re
 import sys
@@ -128,7 +129,7 @@ class Flow:
         outputs[output].extend({"node": t, "type": "main", "index": 0} for t in targets)
 
     def chain(self, *names: str) -> None:
-        for a, b in zip(names, names[1:], strict=False):
+        for a, b in itertools.pairwise(names):
             self.link(a, b)
 
 
@@ -255,9 +256,7 @@ def http(
     }
     if headers:
         params["sendHeaders"] = True
-        params["headerParameters"] = {
-            "parameters": [{"name": k, "value": v} for k, v in headers.items()]
-        }
+        params["headerParameters"] = {"parameters": [{"name": k, "value": v} for k, v in headers.items()]}
     if body is not None:
         params.update({"sendBody": True, "specifyBody": "json", "jsonBody": body})
     extra: dict[str, Any] = {"credentials": {"httpHeaderAuth": DOWNSTREAM}}
@@ -376,10 +375,7 @@ def entry(
         (1320, y - 20),
         {
             "respondWith": "json",
-            "responseBody": (
-                f"={{{{ JSON.stringify({{ accepted: true, key: $json.key, "
-                f"execution_id: $execution.id }}) }}}}"
-            ),
+            "responseBody": ("={{ JSON.stringify({ accepted: true, key: $json.key, execution_id: $execution.id }) }}"),
             "options": {"responseCode": 202},
         },
     )

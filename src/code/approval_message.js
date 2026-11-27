@@ -7,10 +7,11 @@ const settings = $('Settings').first().json;
 const request = $('Validate request').first().json;
 const timeoutS = Number(settings.approval_timeout_s);
 
+// No URL class in the task runner's sandbox: the resume URL already carries a query string
+// (n8n's resume token), so the decision is appended to it.
 function link(decision) {
-  const url = new URL($execution.resumeUrl);
-  url.searchParams.set('decision', decision);
-  return url.toString();
+  const base = String($execution.resumeUrl);
+  return `${base}${base.includes('?') ? '&' : '?'}decision=${decision}`;
 }
 
 const text = request.post.text;
