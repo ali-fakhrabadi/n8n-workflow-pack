@@ -60,7 +60,7 @@ jobs:
               print(path, len(wf["nodes"]), "nodes ok")
           EOF
       - name: Code node unit tests
-        run: node --test tests/unit
+        run: node --test tests/unit/*.test.mjs
 
   harness:
     name: Replay harness - recorded events against a fresh n8n 2.45.6

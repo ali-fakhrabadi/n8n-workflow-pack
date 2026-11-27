@@ -1,4 +1,4 @@
-// Unit tests of the workflows' Code nodes: `node --test tests/unit`.
+// Unit tests of the workflows' Code nodes: `node --test tests/unit/*.test.mjs`.
 //
 // Each script runs as n8n runs it: the body of an async function with n8n's helpers in scope
 // ($, $json, $execution, $runIndex). Placeholders are filled as scripts/build_workflows.py does.

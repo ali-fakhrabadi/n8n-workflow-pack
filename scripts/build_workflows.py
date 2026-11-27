@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the import-ready workflow exports in workflows/ from this definition and src/code/*.js.
 
-The Code nodes' JavaScript lives in src/code/ (unit-tested with `node --test tests/unit`); this
+The Code nodes' JavaScript lives in src/code/ (unit-tested with `node --test tests/unit/*.test.mjs`); this
 script embeds it. Node ids are derived from names, so the output is the same on every run and
 CI fails when the committed JSON is stale. No credential values are written: nodes refer to
 credentials by id and name, and setup/setup.mjs creates them from secrets.

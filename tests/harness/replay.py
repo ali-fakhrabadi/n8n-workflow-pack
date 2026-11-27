@@ -49,7 +49,7 @@ PATHS = {"social": "social-post-requests", "email": "inbound-email", "lead": "le
 WRITE_STEP = {"social": "social.publish", "email": "sheets.append", "lead": "crm.upsert"}
 LEDGER_NAME = {"social": "social-post-approval", "email": "email-to-sheet", "lead": "lead-follow-up"}
 COUNT_LOCK = threading.Lock()
-COUNTS = {"webhook_deliveries": 0, "approval_clicks": 0}
+COUNTS = {"webhook_deliveries": 0, "approval_clicks": 0, "early_click_repeats": 0}
 
 
 def secret(name: str) -> str:
@@ -131,6 +131,26 @@ def mails_to(address: str) -> int:
     return int((body or {}).get("messages_count", 0)) if status == 200 else -1
 
 
+def click(url: str, *, retry_early: bool = True) -> tuple[int, int]:
+    """A reviewer's click on an approval link: (final HTTP status, clicks repeated).
+
+    The chat message is posted a moment before n8n's Wait node starts waiting; a click in that
+    gap gets 409 and changes nothing. A person clicks again, so the harness does too (up to 5
+    times, 1 s apart). Every click is counted.
+    """
+    repeats = 0
+    while True:
+        with COUNT_LOCK:
+            COUNTS["approval_clicks"] += 1
+        status = http("GET", url)[0]
+        if status != 409 or not retry_early or repeats >= 5:
+            return status, repeats
+        repeats += 1
+        with COUNT_LOCK:
+            COUNTS["early_click_repeats"] += 1
+        time.sleep(1.0)
+
+
 def script(step: str, key: str, responses: list[dict[str, Any]]) -> None:
     http("POST", f"{MOCKS}/_mock/script", {"step": step, "key": key, "responses": responses})
 
@@ -204,12 +224,14 @@ def run_event(event: dict[str, Any]) -> dict[str, Any]:
             url = ask[0][f"{approval['decision']}_url"]
             if approval.get("by"):
                 url += "&by=" + urllib.parse.quote(approval["by"])
-            clicks = []
-            for _ in range(int(approval.get("clicks", 1))):
-                with COUNT_LOCK:
-                    COUNTS["approval_clicks"] += 1
-                clicks.append(http("GET", url)[0])
+            # The first click is repeated if it came too early; later ones are deliberate repeats
+            # of a decision already made and must not resume anything.
+            first, repeats = click(url)
+            clicks = [first]
+            result["early_click_repeats"] = repeats
+            for _ in range(int(approval.get("clicks", 1)) - 1):
                 time.sleep(1.0)
+                clicks.append(click(url, retry_early=False)[0])
             result["click_responses"] = clicks
 
     second = event.get("second")
@@ -259,9 +281,8 @@ def run_event(event: dict[str, Any]) -> dict[str, Any]:
                 again = wait_for(lambda: (lambda m: m if len(m) >= 2 else None)(messages(key, "approval_request")), 60)
                 result["approval_requests_after_redelivery"] = len(again or [])
                 if again:
-                    with COUNT_LOCK:
-                        COUNTS["approval_clicks"] += 1
-                    result["redelivery_click"] = http("GET", again[-1]["approve_url"])[0]
+                    result["redelivery_click"], repeats = click(again[-1]["approve_url"])
+                    result["early_click_repeats"] = result.get("early_click_repeats", 0) + repeats
             done = wait_for(lambda: messages(key, "run_finished"), EVENT_TIMEOUT_S) or []
             result["redelivery_status"] = done[-1]["status"] if done else None
             result["redelivery_n8n_status"] = API.status(done[-1].get("execution_id")) if done and API else None
@@ -411,6 +432,7 @@ def verify_ledger() -> int:
         "events_passed": sum(r["passed"] for r in report_rows),
         "webhook_deliveries": data["counts"]["webhook_deliveries"],
         "approval_clicks": data["counts"]["approval_clicks"],
+        "early_click_repeats": data["counts"].get("early_click_repeats", 0),
         "by_workflow": {
             w: {
                 "events": sum(r["workflow"] == w for r in report_rows),

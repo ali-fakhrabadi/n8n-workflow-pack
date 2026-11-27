@@ -100,7 +100,11 @@ version.
 - **Approval:** `Approval message` builds approve and reject links from the execution's resume
   URL (n8n adds a resume token to it); `Ask for approval` posts them to the chat channel;
   `Wait for decision` waits for the first click or `approval_timeout_s` (48 h by default). A
-  later click finds no waiting execution. Anything but `approve` counts as a rejection.
+  later click finds no waiting execution (`409`). Anything but `approve` counts as a rejection.
+  The message is posted a moment before the run starts waiting (n8n cannot do both in one
+  step for a generic chat webhook), so a click in that first moment also gets `409` and has to
+  be repeated; the decision is never applied twice. With Slack, n8n's own "send and wait"
+  operation avoids this gap.
 - **Publish:** retry loop around `POST {social_api_url}/v1/posts`.
 - **Ends:** `done` (published, with post id and URL), `rejected`, `expired`, or an alert.
 

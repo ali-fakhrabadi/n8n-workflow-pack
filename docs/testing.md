@@ -4,7 +4,7 @@ Three layers, all run in CI on every push.
 
 | Layer | Command | What it proves |
 |---|---|---|
-| Code node unit tests | `node --test tests/unit` | Validation, extraction, retry classification and approval logic, run as n8n runs them (helpers in scope, no `URL` class, like n8n's task runner) |
+| Code node unit tests | `node --test tests/unit/*.test.mjs` | Validation, extraction, retry classification and approval logic, run as n8n runs them (helpers in scope, no `URL` class, like n8n's task runner) |
 | Export checks | `python3 scripts/build_workflows.py --check`, `python3 tests/events/generate.py --check` | The committed workflow JSON and events are exactly what the definitions produce; every connection points at a node; no credential values in the exports |
 | Replay harness | `tests/harness/run.sh` | The real exports, imported by the real setup script into a fresh n8n, behave as specified against recorded events |
 
@@ -78,3 +78,12 @@ of recorded runs are kept in [`docs/results/`](results).
 - **A redelivered post asks for approval again.** After a permanent publish error, the
   redelivered request goes through approval again; the harness now approves that second
   request instead of letting it expire.
+- **An approval click can come too early.** On the GitHub runner (faster than the lab VM), the
+  harness clicked approve within milliseconds of the chat message for 2 of 20 social events.
+  The run was not waiting yet, n8n answered `409`, and the post expired unpublished: safe, but
+  the reviewer's click was lost. The message has to be posted before the Wait node starts, so
+  the gap cannot be closed inside a generic-webhook workflow; it is documented in
+  [workflows.md](workflows.md#01-social-post-with-human-approval), and the harness now does
+  what a reviewer does: it clicks again after a `409` on the first click (up to 5 times, 1 s
+  apart) and reports these repeats as `early_click_repeats`. The four lab runs in
+  [`results/`](results) needed none.
