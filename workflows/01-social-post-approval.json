@@ -1,0 +1,967 @@
+{
+  "id": "packSocialApprov",
+  "name": "01 Social post with human approval",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 01 Social post with human approval\nA post request is checked (channel, length, media URL), then its **request_id** is claimed in the ledger: a repeat answers `200 duplicate` and does nothing, even when copies arrive at the same moment. The sender gets `202` at once; the rest runs in the background.",
+        "width": 1560,
+        "height": 200,
+        "color": 7
+      },
+      "id": "28625fb5-55b7-5882-8837-f5b5e919a509",
+      "name": "Note: intake",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "social-post-requests",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "64cab312-8809-5596-9070-c13e8b1b2f50",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "c5e2ca77-fab4-5a0c-b10e-b8c781f0d6ed",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packWebhookAuth1",
+          "name": "Inbound webhook token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "87c6ccb9-f5b4-5e74-8fbd-a25a83f63db0",
+              "name": "chat_url",
+              "value": "http://mock-sinks:8000/chat/messages",
+              "type": "string"
+            },
+            {
+              "id": "cb3e86db-f9ee-59d8-9113-b7de4b4c8761",
+              "name": "social_api_url",
+              "value": "http://mock-sinks:8000/social",
+              "type": "string"
+            },
+            {
+              "id": "1202b691-1d9e-5639-bcd9-7cfe16037149",
+              "name": "approval_timeout_s",
+              "value": 172800,
+              "type": "number"
+            },
+            {
+              "id": "f0385f50-94b8-579a-9b83-ae4eb3fe1c15",
+              "name": "max_attempts",
+              "value": 4,
+              "type": "number"
+            },
+            {
+              "id": "a566e84c-c958-5afe-bddb-89a5bddc4ded",
+              "name": "retry_base_s",
+              "value": 5,
+              "type": "number"
+            },
+            {
+              "id": "6912b20d-d700-5225-bd4c-94947fd194bc",
+              "name": "claim_stale_after_s",
+              "value": 3600,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fe28fce8-bf26-522c-8de2-507a6f53ab86",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node \"Validate request\" (01 social post). Run once for all items.\n//\n// Checks a post request before anything is claimed or sent. An invalid request is answered\n// with 400 and the reason; nothing else happens. Text length is counted in Unicode code\n// points, as the networks count it, against the channel's limit.\nconst WEBHOOK_NODE = 'Webhook';\nconst CHANNEL_LIMITS = { x: 280, mastodon: 500, linkedin: 3000, facebook: 5000 };\nconst KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/;\n\nconst body = ($(WEBHOOK_NODE).first().json || {}).body;\n\nfunction fail(reason) {\n  return [{ json: { valid: false, reason } }];\n}\n\nif (!body || typeof body !== 'object' || Array.isArray(body)) return fail('body must be a JSON object');\nconst requestId = typeof body.request_id === 'string' ? body.request_id.trim() : '';\nif (!KEY_PATTERN.test(requestId)) return fail('request_id is missing or malformed');\nconst channel = typeof body.channel === 'string' ? body.channel.trim().toLowerCase() : '';\nif (!Object.hasOwn(CHANNEL_LIMITS, channel)) {\n  return fail(`channel must be one of ${Object.keys(CHANNEL_LIMITS).join(', ')}`);\n}\nif (typeof body.text !== 'string') return fail('text is required');\nconst text = body.text.replace(/\\r\\n/g, '\\n').trim();\nif (!text) return fail('text is empty');\n// Control characters other than newline and tab are never wanted in a post.\nif (/[\\u0000-\\u0008\\u000B-\\u001F\\u007F]/.test(text)) return fail('text contains control characters');\nconst length = [...text].length;\nif (length > CHANNEL_LIMITS[channel]) {\n  return fail(`text is ${length} characters; ${channel} allows ${CHANNEL_LIMITS[channel]}`);\n}\nlet mediaUrl = null;\nif (body.media_url !== undefined && body.media_url !== null && body.media_url !== '') {\n  let parsed;\n  try {\n    parsed = new URL(String(body.media_url));\n  } catch {\n    return fail('media_url is not a URL');\n  }\n  if (parsed.protocol !== 'https:') return fail('media_url must use https');\n  mediaUrl = parsed.toString();\n}\nconst requestedBy = typeof body.requested_by === 'string' ? body.requested_by.trim().slice(0, 120) : '';\n\nreturn [\n  {\n    json: {\n      valid: true,\n      key: requestId,\n      post: {\n        request_id: requestId,\n        channel,\n        text,\n        media_url: mediaUrl,\n        requested_by: requestedBy || null,\n        length,\n      },\n    },\n  },\n];\n"
+      },
+      "id": "18ed88e5-b578-53cf-8e8b-2f102c9fb392",
+      "name": "Validate request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "0807df29-869c-5da2-a5a6-5a5254348a40",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ed6d2a07-5486-51bf-9ab9-b69a05eb46a6",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: false, error: $json.reason }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "add5fed4-0eeb-51ce-943f-6d46f6c7c6c5",
+      "name": "Reject 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO idempotency_keys (workflow, key, status, execution_id)\nVALUES ($1, $2, 'processing', $3)\nON CONFLICT (workflow, key) DO UPDATE\n   SET status = 'processing', execution_id = EXCLUDED.execution_id,\n       attempts = idempotency_keys.attempts + 1, error = NULL, updated_at = now()\n WHERE idempotency_keys.status = 'failed'\n    OR (idempotency_keys.status = 'processing'\n        AND idempotency_keys.updated_at < now() - make_interval(secs => $4::double precision))\nRETURNING workflow, key, attempts;",
+        "options": {
+          "queryReplacement": "={{ 'social-post-approval' }},{{ $json.key }},{{ $execution.id }},{{ $('Settings').first().json.claim_stale_after_s }}"
+        }
+      },
+      "id": "f15b4928-80ac-5886-99f4-0359b9e24b7f",
+      "name": "Claim key",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        880,
+        280
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "packLedgerPg0001",
+          "name": "Idempotency ledger (PostgreSQL)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f1300ed5-ea12-538a-9f4b-9a44ecf52acf",
+              "leftValue": "={{ $json.key }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a830bf33-5658-53de-aef7-7dc4336945d2",
+      "name": "First delivery?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: false, duplicate: true, key: $('Validate request').first().json.key }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "14b7c8a8-23a5-5c6a-9b25-22fa4215c2d4",
+      "name": "Duplicate 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: true, key: $json.key, execution_id: $execution.id }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "e1dceec4-ae80-5722-8299-b942900c8773",
+      "name": "Accept 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Approval\nA reviewer gets approve / reject links in chat. The run waits (no polling) until the first click or the time limit; after the limit the request **expires** and nothing is published.",
+        "width": 900,
+        "height": 200,
+        "color": 7
+      },
+      "id": "36431814-808b-59ed-adf6-4375b4bd9bf3",
+      "name": "Note: approval",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1520,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node \"Approval message\" (01 social post). Run once for all items.\n//\n// Builds the chat message a reviewer acts on. The approve and reject links are this\n// execution's resume URL (it carries n8n's resume token) plus a decision. The Wait node that\n// follows resumes on the first click; a later click finds no waiting execution.\nconst settings = $('Settings').first().json;\nconst request = $('Validate request').first().json;\nconst timeoutS = Number(settings.approval_timeout_s);\n\nfunction link(decision) {\n  const url = new URL($execution.resumeUrl);\n  url.searchParams.set('decision', decision);\n  return url.toString();\n}\n\nconst text = request.post.text;\nconst preview = [...text].length > 280 ? `${[...text].slice(0, 277).join('')}...` : text;\nreturn [\n  {\n    json: {\n      kind: 'approval_request',\n      workflow: 'social-post-approval',\n      key: request.key,\n      channel: request.post.channel,\n      requested_by: request.post.requested_by,\n      text: `Approve this ${request.post.channel} post?\\n\\n${preview}`,\n      approve_url: link('approve'),\n      reject_url: link('reject'),\n      expires_at: new Date(Date.now() + timeoutS * 1000).toISOString(),\n    },\n  },\n];\n"
+      },
+      "id": "5a616d44-ae79-555e-811a-b0a31652f271",
+      "name": "Approval message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.chat_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "bd3d6d3b-bd69-58a1-83c3-fd1e59d95889",
+      "name": "Ask for approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        280
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packDownstream01",
+          "name": "Downstream API token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "GET",
+        "responseMode": "onReceived",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": "={{ $('Settings').first().json.approval_timeout_s }}",
+        "resumeUnit": "seconds",
+        "options": {}
+      },
+      "id": "78bac567-d87c-5e5a-afbf-4588c15a0f16",
+      "name": "Wait for decision",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        280
+      ],
+      "webhookId": "4647d72d-1c50-571d-9344-ead2c6ea4b8f"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node \"Read decision\" (01 social post), right after the Wait node. Run once for all items.\n//\n// A click on a link resumes the Wait node with the request's query string. When the time\n// limit passes first, the Wait node hands on its own input (the approval message), which has\n// no query: the request expired. Anything but \"approve\" counts as a rejection, so a mangled\n// link can never publish.\nconst resumed = $json || {};\nconst query = resumed.query && typeof resumed.query === 'object' ? resumed.query : null;\n\nlet decision;\nif (!query) decision = 'expired';\nelse if (String(query.decision || '').toLowerCase() === 'approve') decision = 'approve';\nelse decision = 'reject';\n\nconst decidedBy = query && typeof query.by === 'string' ? query.by.slice(0, 120) : null;\nconst finalStatus = { approve: 'processing', reject: 'rejected', expired: 'expired' }[decision];\nreturn [\n  {\n    json: {\n      decision,\n      decided_by: decidedBy,\n      final_status: finalStatus,\n      outcome: { decision, decided_by: decidedBy, published: false },\n    },\n  },\n];\n"
+      },
+      "id": "ba4a2c54-68f3-5e6b-9f21-8bdc6dba1218",
+      "name": "Read decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "e63a9f60-d609-5239-9e2a-d68a0f380285",
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "approve",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "approve"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "5317540a-7402-5148-98c6-07a2373cd9db",
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "reject",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "reject"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "149b57d7-c0b5-5a85-8280-8a1f6a0bfd28",
+                    "leftValue": "={{ $json.decision }}",
+                    "rightValue": "expired",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "expired"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "550a8521-4010-5388-b406-7adafc1a8868",
+      "name": "Decision",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2420,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Publish with retries\nThe post goes out with an **Idempotency-Key** header. 429 and 5xx are retried with exponential backoff and jitter (Retry-After honoured); other 4xx stop at once. A failed run raises an error, so the error workflow alerts and releases the key.",
+        "width": 1100,
+        "height": 200,
+        "color": 7
+      },
+      "id": "b0b6a7a3-8814-5906-b1c3-858c58afc3e5",
+      "name": "Note: publish",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2620,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.social_api_url }}/v1/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Validate request').first().json.key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Validate request').first().json.post.channel, text: $('Validate request').first().json.post.text, media_url: $('Validate request').first().json.post.media_url }) }}"
+      },
+      "id": "49efc559-757d-5c7c-b6a4-c8c6198d5358",
+      "name": "Publish post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packDownstream01",
+          "name": "Downstream API token"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node \"Classify <step>\" (run once for all items), right after an HTTP Request node that\n// returns the full response and never throws on HTTP errors.\n//\n//   ok       2xx: continue\n//   retry    transient (no response, 408, 429, 5xx) and attempts are left: wait, call again\n//   failed   permanent (other 4xx) or attempts used up: the next node stops the run with an\n//            error, so the error workflow releases the key and raises an alert\n//\n// Backoff: exponential with full jitter, honours Retry-After, capped at 300 s. Attempts and\n// the base wait come from the Settings node, so the harness can shrink them.\nconst STEP = 'publish';\nconst settings = $('Settings').first().json;\nconst maxAttempts = Math.max(1, Number(settings.max_attempts || 4));\nconst baseWaitS = Math.max(0.1, Number(settings.retry_base_s || 5));\n\nconst response = $json || {};\nconst status = Number(response.statusCode || 0);\nconst body = response.body && typeof response.body === 'object' && !Array.isArray(response.body) ? response.body : {};\nconst attempt = $runIndex + 1;\n\nlet route;\nlet transient = false;\nif (status >= 200 && status < 300) {\n  route = 'ok';\n} else if (status === 0 || status === 408 || status === 429 || status >= 500) {\n  transient = true;\n  route = attempt < maxAttempts ? 'retry' : 'failed';\n} else {\n  route = 'failed';\n}\n\nlet waitS = 0;\nif (route === 'retry') {\n  const headers = response.headers || {};\n  const retryAfter = Number(headers['retry-after'] || 0);\n  const ceiling = Math.min(300, baseWaitS * 2 ** (attempt - 1));\n  const jittered = ceiling / 2 + Math.random() * (ceiling / 2);\n  const chosen = Math.min(300, Math.max(jittered, Number.isFinite(retryAfter) ? retryAfter : 0));\n  waitS = Math.round(chosen * 10) / 10;\n}\n\nlet error = null;\nif (route === 'failed') {\n  const why = transient ? `gave up after ${attempt} attempts` : 'permanent error';\n  const detail =\n    (body.error && (body.error.message || body.error.code)) || (response.error && response.error.message) || '';\n  error = `${STEP}: ${why} (HTTP ${status || 'no response'}${detail ? `: ${String(detail).slice(0, 160)}` : ''})`;\n}\n\n// Only a small, bounded copy of the answer is kept as the run's outcome.\nconst outcome = route === 'ok' && JSON.stringify(body).length <= 2000 ? body : route === 'ok' ? { truncated: true } : null;\nreturn [{ json: { step: STEP, route, attempt, status_code: status, wait_s: waitS, error, outcome } }];\n"
+      },
+      "id": "df37d223-2b22-509c-95ab-18adeebddd45",
+      "name": "Classify publish",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "ecaa3ffd-d375-5c5f-9e81-20e7b6eee53b",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "ok",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ok"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "276112bd-8e78-558d-bedc-9a1f114475ee",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "retry",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "retry"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "6e4d39c1-e32f-55bd-af12-86842b37536f",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "failed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "failed"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2e20daf6-823c-55bb-836f-c00f844226c7",
+      "name": "Publish result",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        3080,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": "={{ $json.wait_s }}",
+        "unit": "seconds"
+      },
+      "id": "8a5e0cde-f652-5f96-8dc3-b67fddb5f76d",
+      "name": "Back off (publish)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3300,
+        380
+      ],
+      "webhookId": "b8c690c9-3eb9-5126-aad3-ded8b73190da"
+    },
+    {
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "={{ $json.error }}"
+      },
+      "id": "c91cdd01-7978-5288-90d6-49ec46e37678",
+      "name": "Fail run (publish)",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        3300,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6f574942-6c63-5b04-8c1d-34e7a9cdbd18",
+              "name": "final_status",
+              "value": "done",
+              "type": "string"
+            },
+            {
+              "id": "545741be-6846-542a-8f84-ccca5c3b1357",
+              "name": "outcome",
+              "value": "={{ { decision: 'approve', decided_by: $('Read decision').first().json.decided_by, published: true, post_id: $json.outcome.id, url: $json.outcome.url, attempts: $json.attempt } }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d27f856e-bdf3-5664-817a-baf3b85e05e9",
+      "name": "Published",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3520,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE idempotency_keys\n   SET status = $3, outcome = $4::jsonb, updated_at = now()\n WHERE workflow = $1 AND key = $2 AND execution_id = $5\nRETURNING workflow, key, status, attempts, outcome;",
+        "options": {
+          "queryReplacement": "={{ 'social-post-approval' }},{{ $('Validate request').first().json.key }},{{ $json.final_status }},{{ JSON.stringify($json.outcome || {}) }},{{ $execution.id }}"
+        }
+      },
+      "id": "3abeb3b2-4df7-5212-9358-9f1155d6504e",
+      "name": "Record outcome",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        3740,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "packLedgerPg0001",
+          "name": "Idempotency ledger (PostgreSQL)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.chat_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ kind: 'run_finished', workflow: $json.workflow, key: $json.key, status: $json.status, attempts: $json.attempts, outcome: $json.outcome, execution_id: $execution.id }) }}"
+      },
+      "id": "f20e0953-c084-5fc0-9842-f39ed3697fb9",
+      "name": "Post run notice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3960,
+        400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packDownstream01",
+          "name": "Downstream API token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Validate request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate request": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Claim key",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim key": {
+      "main": [
+        [
+          {
+            "node": "First delivery?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First delivery?": {
+      "main": [
+        [
+          {
+            "node": "Accept 202",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Duplicate 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accept 202": {
+      "main": [
+        [
+          {
+            "node": "Approval message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval message": {
+      "main": [
+        [
+          {
+            "node": "Ask for approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask for approval": {
+      "main": [
+        [
+          {
+            "node": "Wait for decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for decision": {
+      "main": [
+        [
+          {
+            "node": "Read decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read decision": {
+      "main": [
+        [
+          {
+            "node": "Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish post": {
+      "main": [
+        [
+          {
+            "node": "Classify publish",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify publish": {
+      "main": [
+        [
+          {
+            "node": "Publish result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish result": {
+      "main": [
+        [
+          {
+            "node": "Published",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Back off (publish)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fail run (publish)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Back off (publish)": {
+      "main": [
+        [
+          {
+            "node": "Publish post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision": {
+      "main": [
+        [
+          {
+            "node": "Publish post",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record outcome",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Published": {
+      "main": [
+        [
+          {
+            "node": "Record outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record outcome": {
+      "main": [
+        [
+          {
+            "node": "Post run notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "packErrorHandler"
+  },
+  "pinData": {},
+  "tags": []
+}

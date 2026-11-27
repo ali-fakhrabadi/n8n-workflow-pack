@@ -1,0 +1,752 @@
+{
+  "id": "packEmailToSheet",
+  "name": "02 Email to spreadsheet",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 02 Email to spreadsheet\nYour mail provider's inbound webhook (Postmark, Mailgun, SendGrid) posts each email as JSON. The normalised **Message-ID** is claimed in the ledger, so a provider retry or a forwarded copy never adds a second row.",
+        "width": 1560,
+        "height": 200,
+        "color": 7
+      },
+      "id": "e7aae1a5-32b7-5e17-bfa1-75af2a34847a",
+      "name": "Note: intake",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "inbound-email",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "2155964a-e63b-57fb-8115-13ae62d4ad64",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "d8666492-a9cd-545a-bba0-8b90c91fdeec",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packWebhookAuth1",
+          "name": "Inbound webhook token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d05ab85c-c1e7-52a8-81c5-eaec505f44db",
+              "name": "chat_url",
+              "value": "http://mock-sinks:8000/chat/messages",
+              "type": "string"
+            },
+            {
+              "id": "bf7be744-0179-559c-abba-04f63444ba54",
+              "name": "sheets_api_url",
+              "value": "http://mock-sinks:8000/sheets",
+              "type": "string"
+            },
+            {
+              "id": "8f2badd5-0f48-5b44-8b11-372531d9754b",
+              "name": "sheet_id",
+              "value": "demo-invoices",
+              "type": "string"
+            },
+            {
+              "id": "1fed8627-0adb-546b-8d3a-2316ca4d9b41",
+              "name": "sheet_tab",
+              "value": "Invoices",
+              "type": "string"
+            },
+            {
+              "id": "cdd2e98a-f43d-52aa-90db-5fc279d89f9e",
+              "name": "review_tab",
+              "value": "Review",
+              "type": "string"
+            },
+            {
+              "id": "fcef1b57-4003-57ec-86c8-f8473443ad21",
+              "name": "max_attempts",
+              "value": 4,
+              "type": "number"
+            },
+            {
+              "id": "43c4f464-c857-5751-9d69-577189fe38dc",
+              "name": "retry_base_s",
+              "value": 5,
+              "type": "number"
+            },
+            {
+              "id": "fe4a90e7-13e6-5e64-891d-024bc71f2078",
+              "name": "claim_stale_after_s",
+              "value": 3600,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "441f4e89-4c61-501b-b4e8-7ca9cd7c941b",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node \"Validate email\" (02 email to sheet). Run once for all items.\n//\n// The webhook receives an inbound-parse JSON (the shape Postmark, Mailgun or SendGrid post).\n// The Message-ID is the idempotency key, normalised so \"<ABC@x>\" and \"abc@x\" are the same\n// message. An HTML-only message is reduced to text.\nconst WEBHOOK_NODE = 'Webhook';\nconst MAX_TEXT = 100000;\n\nconst body = ($(WEBHOOK_NODE).first().json || {}).body;\n\nfunction fail(reason) {\n  return [{ json: { valid: false, reason } }];\n}\n\nfunction address(value) {\n  const raw = typeof value === 'string' ? value.trim() : '';\n  const angled = raw.match(/^(.*)<([^<>\\s]+)>$/);\n  const email = (angled ? angled[2] : raw).trim().toLowerCase();\n  const name = angled ? angled[1].trim().replace(/^\"|\"$/g, '') : '';\n  return /^[^@\\s]+@[^@\\s]+\\.[a-z]{2,}$/i.test(email) ? { email, name } : null;\n}\n\nfunction htmlToText(html) {\n  return html\n    .replace(/<(script|style)[^>]*>[\\s\\S]*?<\\/\\1>/gi, ' ')\n    .replace(/<br\\s*\\/?>|<\\/(p|div|tr|li|h[1-6])>/gi, '\\n')\n    .replace(/<[^>]+>/g, ' ')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&amp;/g, '&')\n    .replace(/[ \\t]+/g, ' ')\n    .replace(/\\n\\s+/g, '\\n')\n    .trim();\n}\n\nif (!body || typeof body !== 'object' || Array.isArray(body)) return fail('body must be a JSON object');\nconst messageId =\n  typeof body.message_id === 'string' ? body.message_id.trim().replace(/^<|>$/g, '').toLowerCase() : '';\nif (!/^[^\\s<>]{3,250}$/.test(messageId) || !messageId.includes('@')) {\n  return fail('message_id is missing or malformed');\n}\nconst from = address(body.from);\nif (!from) return fail('from is not an email address');\nlet text = typeof body.text === 'string' ? body.text : '';\nif (!text.trim() && typeof body.html === 'string') text = htmlToText(body.html);\ntext = text.replace(/\\r\\n/g, '\\n').trim();\nif (!text) return fail('message has no text');\nif (text.length > MAX_TEXT) return fail(`message text is longer than ${MAX_TEXT} characters`);\nconst subject = typeof body.subject === 'string' ? body.subject.trim().slice(0, 300) : '';\nconst received = body.date ? new Date(body.date) : null;\n\nreturn [\n  {\n    json: {\n      valid: true,\n      key: messageId,\n      email: {\n        message_id: messageId,\n        from: from.email,\n        from_name: from.name || null,\n        subject,\n        received_at: received && !Number.isNaN(received.getTime()) ? received.toISOString() : null,\n        text,\n      },\n    },\n  },\n];\n"
+      },
+      "id": "c99165c2-df35-5673-93ac-179cbd21e624",
+      "name": "Validate email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a91e4f38-23be-553b-ba8b-b7ebf03f5a0d",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ecb5d9b1-4aa4-5eff-a0d7-4062e4b1fc0f",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: false, error: $json.reason }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "b832d4d7-72bd-5154-aa5f-c8f5c690a22e",
+      "name": "Reject 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO idempotency_keys (workflow, key, status, execution_id)\nVALUES ($1, $2, 'processing', $3)\nON CONFLICT (workflow, key) DO UPDATE\n   SET status = 'processing', execution_id = EXCLUDED.execution_id,\n       attempts = idempotency_keys.attempts + 1, error = NULL, updated_at = now()\n WHERE idempotency_keys.status = 'failed'\n    OR (idempotency_keys.status = 'processing'\n        AND idempotency_keys.updated_at < now() - make_interval(secs => $4::double precision))\nRETURNING workflow, key, attempts;",
+        "options": {
+          "queryReplacement": "={{ 'email-to-sheet' }},{{ $json.key }},{{ $execution.id }},{{ $('Settings').first().json.claim_stale_after_s }}"
+        }
+      },
+      "id": "5403868d-4ccc-566c-88d3-3b294d708f64",
+      "name": "Claim key",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        880,
+        280
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "packLedgerPg0001",
+          "name": "Idempotency ledger (PostgreSQL)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b252ab5d-8976-5807-b7c8-c5c66493d178",
+              "leftValue": "={{ $json.key }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e67a4eea-70ce-5a37-8428-5fc0912101a9",
+      "name": "First delivery?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: false, duplicate: true, key: $('Validate email').first().json.key }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "2a13305b-c589-5d8f-8647-e94a23aa1da8",
+      "name": "Duplicate 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: true, key: $json.key, execution_id: $execution.id }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "c53e9e9e-0ea6-5d60-84ee-893131706f3a",
+      "name": "Accept 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Extract and append\nLabelled fields (invoice no., PO, total, currency, due date) are read without a model, so the same email always gives the same row. A row with a missing or ambiguous field goes to the **Review** tab with the reason. The append uses the Google Sheets `values:append` call and is retried on 429/5xx.",
+        "width": 1340,
+        "height": 200,
+        "color": 7
+      },
+      "id": "4c276518-4ea9-5378-87a1-59e6ae7914c4",
+      "name": "Note: extract",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1520,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node \"Extract fields\" (02 email to sheet). Run once for all items.\n//\n// Reads invoice fields from labelled lines of the email (no model, so the same email always\n// gives the same row). Amounts in \"1,234.50\", \"1.234,50\" or \"1 234,50\" form are normalised; a\n// slash date is accepted only when the day/month order is unambiguous. A row with a missing or\n// doubtful field still reaches the sheet, but on the review tab with the reasons.\nconst settings = $('Settings').first().json;\nconst { email } = $('Validate email').first().json;\nconst text = `${email.subject}\\n${email.text}`;\n\nconst SYMBOLS = { $: 'USD', '€': 'EUR', '£': 'GBP' };\nconst CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'CHF', 'SEK', 'NOK', 'DKK', 'AED'];\nconst MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];\nconst TOKEN = /[A-Za-z0-9][A-Za-z0-9/_-]*/;\n\nfunction labelled(labels) {\n  for (const label of labels) {\n    const match = text.match(new RegExp(`(?:^|\\\\n)[ \\\\t]*(?:${label})[ \\\\t]*[:#-]?[ \\\\t]*([^\\\\n]+)`, 'i'));\n    if (match) return match[1].trim();\n  }\n  return null;\n}\n\nfunction parseAmount(raw) {\n  if (!raw) return { amount: null, currency: null };\n  let currency = null;\n  for (const [symbol, code] of Object.entries(SYMBOLS)) if (raw.includes(symbol)) currency = code;\n  const code = raw.toUpperCase().match(new RegExp(`\\\\b(${CURRENCIES.join('|')})\\\\b`));\n  if (code) currency = code[1];\n  const number = raw.match(/-?\\d[\\d.,'  ]*/);\n  if (!number) return { amount: null, currency };\n  let digits = number[0].replace(/['  ]/g, '').replace(/[.,]$/, '');\n  const lastComma = digits.lastIndexOf(',');\n  const lastDot = digits.lastIndexOf('.');\n  if (lastComma > lastDot) {\n    // \"1.234,50\" or \"1234,50\": the comma is the decimal separator when two digits follow it.\n    digits = /,\\d{2}$/.test(digits) ? digits.replace(/\\./g, '').replace(',', '.') : digits.replace(/,/g, '');\n  } else {\n    digits = digits.replace(/,/g, '');\n  }\n  const amount = Number(digits);\n  return { amount: Number.isFinite(amount) ? Math.round(amount * 100) / 100 : null, currency };\n}\n\nfunction iso(year, month, day) {\n  const date = new Date(Date.UTC(year, month - 1, day));\n  const valid = date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;\n  return valid ? date.toISOString().slice(0, 10) : null;\n}\n\nfunction month(name) {\n  const index = MONTHS.indexOf(name.slice(0, 3).toLowerCase());\n  return index === -1 ? null : index + 1;\n}\n\nfunction parseDate(raw) {\n  if (!raw) return { date: null, issue: null };\n  let m = raw.match(/(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return { date: iso(+m[1], +m[2], +m[3]), issue: null };\n  m = raw.match(/(\\d{1,2})\\s+([A-Za-z]{3,9})\\.?\\s+(\\d{4})/);\n  if (m && month(m[2])) return { date: iso(+m[3], month(m[2]), +m[1]), issue: null };\n  m = raw.match(/([A-Za-z]{3,9})\\.?\\s+(\\d{1,2}),?\\s+(\\d{4})/);\n  if (m && month(m[1])) return { date: iso(+m[3], month(m[1]), +m[2]), issue: null };\n  m = raw.match(/(\\d{1,2})[/.](\\d{1,2})[/.](\\d{4})/);\n  if (m) {\n    const [a, b, year] = [+m[1], +m[2], +m[3]];\n    if (a > 12 && b <= 12) return { date: iso(year, b, a), issue: null };\n    if (b > 12 && a <= 12) return { date: iso(year, a, b), issue: null };\n    if (a === b) return { date: iso(year, a, b), issue: null };\n    return { date: null, issue: `due date \"${m[0]}\" is ambiguous (day/month order)` };\n  }\n  return { date: null, issue: `due date \"${raw.slice(0, 40)}\" not understood` };\n}\n\nconst invoiceNumber = (labelled(['invoice[ \\\\t]*(?:number|no\\\\.?|#)', 'inv[ \\\\t]*#']) || '').match(TOKEN);\nconst poNumber = (labelled(['po[ \\\\t]*(?:number|no\\\\.?|#)', 'purchase[ \\\\t]+order']) || '').match(TOKEN);\nconst { amount, currency } = parseAmount(labelled(['total[ \\\\t]+due', 'amount[ \\\\t]+due', 'total', 'amount']));\nconst due = parseDate(labelled(['due[ \\\\t]+date', 'payment[ \\\\t]+due', 'due']));\nconst vendor = (labelled(['vendor', 'supplier', 'company']) || email.from_name || '').slice(0, 120) || null;\n\nconst missing = [];\nconst issues = [];\nif (!invoiceNumber) missing.push('invoice_number');\nif (amount === null) missing.push('amount');\nif (!currency) missing.push('currency');\nif (!due.date) missing.push('due_date');\nfor (const field of missing) issues.push(field === 'due_date' && due.issue ? due.issue : `${field} missing`);\nconst status = missing.length ? 'needs_review' : 'ok';\nconst tab = status === 'ok' ? settings.sheet_tab : settings.review_tab;\n\nconst row = [\n  email.message_id,\n  email.received_at || '',\n  email.from,\n  vendor || '',\n  invoiceNumber ? invoiceNumber[0] : '',\n  poNumber ? poNumber[0] : '',\n  amount === null ? '' : amount,\n  currency || '',\n  due.date || '',\n  status,\n  issues.join('; '),\n];\nreturn [{ json: { status, tab, missing, issues, row, range: `${tab}!A1:K1` } }];\n"
+      },
+      "id": "d38e8ea8-7a17-5f7e-afa7-fb8d4500aa5a",
+      "name": "Extract fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.sheets_api_url }}/v4/spreadsheets/{{ $('Settings').first().json.sheet_id }}/values/{{ encodeURIComponent($('Extract fields').first().json.range) }}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Validate email').first().json.key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ values: [ $('Extract fields').first().json.row ] }) }}"
+      },
+      "id": "456fd3cf-e73b-5436-bc1b-e46ea04b3eb8",
+      "name": "Append row",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        280
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packDownstream01",
+          "name": "Downstream API token"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node \"Classify <step>\" (run once for all items), right after an HTTP Request node that\n// returns the full response and never throws on HTTP errors.\n//\n//   ok       2xx: continue\n//   retry    transient (no response, 408, 429, 5xx) and attempts are left: wait, call again\n//   failed   permanent (other 4xx) or attempts used up: the next node stops the run with an\n//            error, so the error workflow releases the key and raises an alert\n//\n// Backoff: exponential with full jitter, honours Retry-After, capped at 300 s. Attempts and\n// the base wait come from the Settings node, so the harness can shrink them.\nconst STEP = 'append';\nconst settings = $('Settings').first().json;\nconst maxAttempts = Math.max(1, Number(settings.max_attempts || 4));\nconst baseWaitS = Math.max(0.1, Number(settings.retry_base_s || 5));\n\nconst response = $json || {};\nconst status = Number(response.statusCode || 0);\nconst body = response.body && typeof response.body === 'object' && !Array.isArray(response.body) ? response.body : {};\nconst attempt = $runIndex + 1;\n\nlet route;\nlet transient = false;\nif (status >= 200 && status < 300) {\n  route = 'ok';\n} else if (status === 0 || status === 408 || status === 429 || status >= 500) {\n  transient = true;\n  route = attempt < maxAttempts ? 'retry' : 'failed';\n} else {\n  route = 'failed';\n}\n\nlet waitS = 0;\nif (route === 'retry') {\n  const headers = response.headers || {};\n  const retryAfter = Number(headers['retry-after'] || 0);\n  const ceiling = Math.min(300, baseWaitS * 2 ** (attempt - 1));\n  const jittered = ceiling / 2 + Math.random() * (ceiling / 2);\n  const chosen = Math.min(300, Math.max(jittered, Number.isFinite(retryAfter) ? retryAfter : 0));\n  waitS = Math.round(chosen * 10) / 10;\n}\n\nlet error = null;\nif (route === 'failed') {\n  const why = transient ? `gave up after ${attempt} attempts` : 'permanent error';\n  const detail =\n    (body.error && (body.error.message || body.error.code)) || (response.error && response.error.message) || '';\n  error = `${STEP}: ${why} (HTTP ${status || 'no response'}${detail ? `: ${String(detail).slice(0, 160)}` : ''})`;\n}\n\n// Only a small, bounded copy of the answer is kept as the run's outcome.\nconst outcome = route === 'ok' && JSON.stringify(body).length <= 2000 ? body : route === 'ok' ? { truncated: true } : null;\nreturn [{ json: { step: STEP, route, attempt, status_code: status, wait_s: waitS, error, outcome } }];\n"
+      },
+      "id": "6a01174c-8341-5f0b-bbf4-6a4b5fbc8707",
+      "name": "Classify append",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "ed4e3e66-d941-55e6-9ea8-45ce7c77d535",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "ok",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ok"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "8edc3d7b-1e97-5b47-8cab-4645a93a71f1",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "retry",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "retry"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "b6ed9c03-dca3-5b8a-8129-17cbe1859619",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "failed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "failed"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "164d756d-9948-5d46-8618-7c551029aec3",
+      "name": "Append result",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2200,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": "={{ $json.wait_s }}",
+        "unit": "seconds"
+      },
+      "id": "70e9fb40-e235-5d66-870c-215d4ad66708",
+      "name": "Back off (append)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2420,
+        460
+      ],
+      "webhookId": "66cec227-1949-5aaf-a14c-ac94f69e22c2"
+    },
+    {
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "={{ $json.error }}"
+      },
+      "id": "69db739c-e4cd-5466-9d40-d257e7e30424",
+      "name": "Fail run (append)",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        2420,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c11e6d37-7ae8-516b-a180-496e5dfb411d",
+              "name": "final_status",
+              "value": "done",
+              "type": "string"
+            },
+            {
+              "id": "96a370e6-fcc5-5101-9a3c-589fb2449bd5",
+              "name": "outcome",
+              "value": "={{ { tab: $('Extract fields').first().json.tab, row_status: $('Extract fields').first().json.status, issues: $('Extract fields').first().json.issues, updated_range: ($json.outcome.updates || {}).updatedRange || null, attempts: $json.attempt } }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "33424de6-878e-51cd-8ca9-d747208f72f8",
+      "name": "Row written",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2640,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE idempotency_keys\n   SET status = $3, outcome = $4::jsonb, updated_at = now()\n WHERE workflow = $1 AND key = $2 AND execution_id = $5\nRETURNING workflow, key, status, attempts, outcome;",
+        "options": {
+          "queryReplacement": "={{ 'email-to-sheet' }},{{ $('Validate email').first().json.key }},{{ $json.final_status }},{{ JSON.stringify($json.outcome || {}) }},{{ $execution.id }}"
+        }
+      },
+      "id": "c0b84a54-f086-5f74-8461-8f1b82e32fdd",
+      "name": "Record outcome",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        2860,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "packLedgerPg0001",
+          "name": "Idempotency ledger (PostgreSQL)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.chat_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ kind: 'run_finished', workflow: $json.workflow, key: $json.key, status: $json.status, attempts: $json.attempts, outcome: $json.outcome, execution_id: $execution.id }) }}"
+      },
+      "id": "c185fbb7-8be6-5692-9eeb-736589faed17",
+      "name": "Post run notice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3080,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packDownstream01",
+          "name": "Downstream API token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Validate email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate email": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Claim key",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim key": {
+      "main": [
+        [
+          {
+            "node": "First delivery?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First delivery?": {
+      "main": [
+        [
+          {
+            "node": "Accept 202",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Duplicate 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row": {
+      "main": [
+        [
+          {
+            "node": "Classify append",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify append": {
+      "main": [
+        [
+          {
+            "node": "Append result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append result": {
+      "main": [
+        [
+          {
+            "node": "Row written",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Back off (append)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fail run (append)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Back off (append)": {
+      "main": [
+        [
+          {
+            "node": "Append row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accept 202": {
+      "main": [
+        [
+          {
+            "node": "Extract fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract fields": {
+      "main": [
+        [
+          {
+            "node": "Append row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Row written": {
+      "main": [
+        [
+          {
+            "node": "Record outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record outcome": {
+      "main": [
+        [
+          {
+            "node": "Post run notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionTimeout": 1800,
+    "errorWorkflow": "packErrorHandler"
+  },
+  "pinData": {},
+  "tags": []
+}

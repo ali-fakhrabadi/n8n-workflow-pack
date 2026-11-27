@@ -1,0 +1,1151 @@
+{
+  "id": "packLeadFollowUp",
+  "name": "03 Lead follow-up sequence",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 03 Lead follow-up\nA form submission needs consent and a valid email; a filled honeypot marks a bot. The **submission_id** is claimed in the ledger, so a double submit or a form-tool retry starts one sequence only.",
+        "width": 1560,
+        "height": 200,
+        "color": 7
+      },
+      "id": "50a67200-473e-5ebf-b847-22903bb42894",
+      "name": "Note: intake",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-submissions",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "af579d10-13e8-5cf3-9410-223c35bcd907",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "6cdd9f1d-c515-5b82-9e61-43998b0dfd90",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packWebhookAuth1",
+          "name": "Inbound webhook token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "32da34cc-3ee0-5e5c-b53b-4547e6bc2dcf",
+              "name": "chat_url",
+              "value": "http://mock-sinks:8000/chat/messages",
+              "type": "string"
+            },
+            {
+              "id": "edc8e1a4-661d-5bfd-8a2e-e7d1f84bb8ae",
+              "name": "crm_api_url",
+              "value": "http://mock-sinks:8000/crm",
+              "type": "string"
+            },
+            {
+              "id": "fedd70a0-59fd-5a40-a1dc-02f208f00f3b",
+              "name": "mail_from",
+              "value": "hello@example.com",
+              "type": "string"
+            },
+            {
+              "id": "de60b7e8-78f2-5513-af0c-e8ea79203c56",
+              "name": "follow_up_delay_s",
+              "value": 259200,
+              "type": "number"
+            },
+            {
+              "id": "227f7064-c0ba-54d8-8039-498284c1fe14",
+              "name": "max_attempts",
+              "value": 4,
+              "type": "number"
+            },
+            {
+              "id": "37d4030f-666e-5fcc-98dd-a8b597de35db",
+              "name": "retry_base_s",
+              "value": 5,
+              "type": "number"
+            },
+            {
+              "id": "597ebea9-d609-5073-a3fd-6cd9897c2b86",
+              "name": "claim_stale_after_s",
+              "value": 3600,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f92ac20c-6fe3-5c7e-9bb4-9c017d8cb4d5",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node \"Validate lead\" (03 lead follow-up). Run once for all items.\n//\n// A form submission is followed up only with consent and a plausible address. A filled\n// honeypot field (\"website\", hidden from people) marks a bot. The email is normalised so the\n// CRM finds the same contact however it was typed.\nconst WEBHOOK_NODE = 'Webhook';\nconst KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/;\n\nconst body = ($(WEBHOOK_NODE).first().json || {}).body;\n\nfunction fail(reason) {\n  return [{ json: { valid: false, reason } }];\n}\n\nfunction clean(value, max) {\n  return typeof value === 'string' ? value.replace(/\\s+/g, ' ').trim().slice(0, max) : '';\n}\n\nif (!body || typeof body !== 'object' || Array.isArray(body)) return fail('body must be a JSON object');\nconst submissionId = typeof body.submission_id === 'string' ? body.submission_id.trim() : '';\nif (!KEY_PATTERN.test(submissionId)) return fail('submission_id is missing or malformed');\nif (clean(body.website, 200)) return fail('spam suspected (honeypot field filled)');\nconst email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';\nif (email.length > 254 || !/^[^@\\s]+@[^@\\s]+\\.[a-z]{2,}$/.test(email)) return fail('email is not valid');\nconst name = clean(body.name, 120);\nif (!name) return fail('name is required');\nif (body.consent !== true) return fail('consent to be contacted is required');\nconst message = typeof body.message === 'string' ? body.message.trim() : '';\nif (message.length > 5000) return fail('message is longer than 5000 characters');\n\nreturn [\n  {\n    json: {\n      valid: true,\n      key: submissionId,\n      lead: {\n        submission_id: submissionId,\n        name,\n        first_name: name.split(' ')[0],\n        email,\n        company: clean(body.company, 200) || null,\n        message: message || null,\n        source: clean(body.source, 60) || 'web-form',\n      },\n    },\n  },\n];\n"
+      },
+      "id": "fc0425d1-7f36-58df-8254-da94e5d34d98",
+      "name": "Validate lead",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "fa8388c8-9dae-5da0-87e0-e683c1797f62",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5402568b-2cdb-5a6e-a419-7f4e20e77dd6",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: false, error: $json.reason }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "fedf3327-c268-5064-8a19-9fc87d503ab0",
+      "name": "Reject 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO idempotency_keys (workflow, key, status, execution_id)\nVALUES ($1, $2, 'processing', $3)\nON CONFLICT (workflow, key) DO UPDATE\n   SET status = 'processing', execution_id = EXCLUDED.execution_id,\n       attempts = idempotency_keys.attempts + 1, error = NULL, updated_at = now()\n WHERE idempotency_keys.status = 'failed'\n    OR (idempotency_keys.status = 'processing'\n        AND idempotency_keys.updated_at < now() - make_interval(secs => $4::double precision))\nRETURNING workflow, key, attempts;",
+        "options": {
+          "queryReplacement": "={{ 'lead-follow-up' }},{{ $json.key }},{{ $execution.id }},{{ $('Settings').first().json.claim_stale_after_s }}"
+        }
+      },
+      "id": "fef0394f-34cc-5b53-a81d-01d7a9f770f4",
+      "name": "Claim key",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        880,
+        280
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "packLedgerPg0001",
+          "name": "Idempotency ledger (PostgreSQL)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a1c6b9fa-dbef-5ce5-abc4-42c63c214c8e",
+              "leftValue": "={{ $json.key }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b0976b6d-c45f-565c-94bf-708816e638d9",
+      "name": "First delivery?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: false, duplicate: true, key: $('Validate lead').first().json.key }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "65c4e10d-0b0f-5346-ba1c-709593eed407",
+      "name": "Duplicate 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: true, key: $json.key, execution_id: $execution.id }) }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "d8b7bdc1-722b-5c8b-9c30-275faaa037de",
+      "name": "Accept 202",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## CRM upsert\nThe contact is found by email or created, never duplicated. 429/5xx are retried with backoff. A contact that is already in a sequence is not mailed again.",
+        "width": 1100,
+        "height": 200,
+        "color": 7
+      },
+      "id": "56b03df7-7bc0-5214-a08a-d27e4a75e75c",
+      "name": "Note: crm",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1520,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.crm_api_url }}/v1/contacts:upsert",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Validate lead').first().json.key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ email: $('Validate lead').first().json.lead.email, name: $('Validate lead').first().json.lead.name, company: $('Validate lead').first().json.lead.company, source: $('Validate lead').first().json.lead.source, message: $('Validate lead').first().json.lead.message, submission_id: $('Validate lead').first().json.key }) }}"
+      },
+      "id": "b2d9f1d4-cff1-5f3f-bb15-f9fd34177293",
+      "name": "Upsert contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        280
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packDownstream01",
+          "name": "Downstream API token"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node \"Classify <step>\" (run once for all items), right after an HTTP Request node that\n// returns the full response and never throws on HTTP errors.\n//\n//   ok       2xx: continue\n//   retry    transient (no response, 408, 429, 5xx) and attempts are left: wait, call again\n//   failed   permanent (other 4xx) or attempts used up: the next node stops the run with an\n//            error, so the error workflow releases the key and raises an alert\n//\n// Backoff: exponential with full jitter, honours Retry-After, capped at 300 s. Attempts and\n// the base wait come from the Settings node, so the harness can shrink them.\nconst STEP = 'upsert';\nconst settings = $('Settings').first().json;\nconst maxAttempts = Math.max(1, Number(settings.max_attempts || 4));\nconst baseWaitS = Math.max(0.1, Number(settings.retry_base_s || 5));\n\nconst response = $json || {};\nconst status = Number(response.statusCode || 0);\nconst body = response.body && typeof response.body === 'object' && !Array.isArray(response.body) ? response.body : {};\nconst attempt = $runIndex + 1;\n\nlet route;\nlet transient = false;\nif (status >= 200 && status < 300) {\n  route = 'ok';\n} else if (status === 0 || status === 408 || status === 429 || status >= 500) {\n  transient = true;\n  route = attempt < maxAttempts ? 'retry' : 'failed';\n} else {\n  route = 'failed';\n}\n\nlet waitS = 0;\nif (route === 'retry') {\n  const headers = response.headers || {};\n  const retryAfter = Number(headers['retry-after'] || 0);\n  const ceiling = Math.min(300, baseWaitS * 2 ** (attempt - 1));\n  const jittered = ceiling / 2 + Math.random() * (ceiling / 2);\n  const chosen = Math.min(300, Math.max(jittered, Number.isFinite(retryAfter) ? retryAfter : 0));\n  waitS = Math.round(chosen * 10) / 10;\n}\n\nlet error = null;\nif (route === 'failed') {\n  const why = transient ? `gave up after ${attempt} attempts` : 'permanent error';\n  const detail =\n    (body.error && (body.error.message || body.error.code)) || (response.error && response.error.message) || '';\n  error = `${STEP}: ${why} (HTTP ${status || 'no response'}${detail ? `: ${String(detail).slice(0, 160)}` : ''})`;\n}\n\n// Only a small, bounded copy of the answer is kept as the run's outcome.\nconst outcome = route === 'ok' && JSON.stringify(body).length <= 2000 ? body : route === 'ok' ? { truncated: true } : null;\nreturn [{ json: { step: STEP, route, attempt, status_code: status, wait_s: waitS, error, outcome } }];\n"
+      },
+      "id": "e94402a1-cea9-592a-831f-fc3dc76c6af4",
+      "name": "Classify upsert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "88f875d9-e001-5a81-82ad-80501bbb5337",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "ok",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ok"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "9ec01ba5-7cd6-523d-bc27-080a56d3ef8a",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "retry",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "retry"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "611c1786-440c-5109-a143-c719214e228e",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "failed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "failed"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "58d9c101-6a0c-5431-8acc-4c8cd31c25df",
+      "name": "Upsert result",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1980,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": "={{ $json.wait_s }}",
+        "unit": "seconds"
+      },
+      "id": "1b3b8ac3-a388-53c8-ac9b-36745537f796",
+      "name": "Back off (upsert)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2200,
+        460
+      ],
+      "webhookId": "9d87c2f8-6f66-5100-8956-f042d51234f1"
+    },
+    {
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "={{ $json.error }}"
+      },
+      "id": "c18e5656-f051-5e63-8548-917fcd71adad",
+      "name": "Fail run (upsert)",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c06efa1b-a1dd-5ec4-bd61-b90029ad44b3",
+              "leftValue": "={{ $('Classify upsert').first().json.outcome.created === true || $('Classify upsert').first().json.outcome.stage === 'new' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c428a575-a222-5ffc-af35-c29aab0c4de9",
+      "name": "New to the sequence?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2420,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a4360f55-de04-5dad-8e8b-d669cd29f0e9",
+              "name": "final_status",
+              "value": "skipped",
+              "type": "string"
+            },
+            {
+              "id": "d9a29b5b-a430-5595-a253-f071a3e10fd0",
+              "name": "outcome",
+              "value": "={{ { reason: 'contact already in a sequence', contact_id: $('Classify upsert').first().json.outcome.id, stage: $('Classify upsert').first().json.outcome.stage } }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "376e2171-b1ab-5262-9355-c8f7f6a58170",
+      "name": "Already in sequence",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2640,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Sequence\nFirst email at once, then a timed wait (3 days by default; the run is stored, not held in memory). If the CRM shows a reply by then, the sequence stops; otherwise one follow-up goes out. Each step updates the CRM stage.",
+        "width": 1980,
+        "height": 200,
+        "color": 7
+      },
+      "id": "bf3da356-b6b3-536f-9474-4fbfba009df8",
+      "name": "Note: sequence",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2620,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $('Settings').first().json.mail_from }}",
+        "toEmail": "={{ $('Validate lead').first().json.lead.email }}",
+        "emailFormat": "text",
+        "options": {
+          "appendAttribution": false
+        },
+        "subject": "Thanks for getting in touch",
+        "text": "=Hi {{ $('Validate lead').first().json.lead.first_name }},\n\nThanks for your message. We have it and will reply within one working day.\n\nReference: {{ $('Validate lead').first().json.key }}"
+      },
+      "id": "1b880bf8-4bfa-5802-89f0-50223f1c8400",
+      "name": "Send first email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2640,
+        200
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "packSmtpSink0001",
+          "name": "Outgoing mail (SMTP)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Settings').first().json.crm_api_url }}/v1/contacts/{{ $('Classify upsert').first().json.outcome.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ stage: 'contacted' }) }}"
+      },
+      "id": "28d54f52-9c12-5f04-b9be-dd7684b73389",
+      "name": "Mark contacted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2860,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packDownstream01",
+          "name": "Downstream API token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": "={{ $('Settings').first().json.follow_up_delay_s }}",
+        "unit": "seconds"
+      },
+      "id": "54cbb84b-fdf6-5347-9cfa-7b8ffb5e7252",
+      "name": "Wait before follow-up",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3080,
+        200
+      ],
+      "webhookId": "a0591c86-95b4-5f15-b47b-72bfef248c47"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Settings').first().json.crm_api_url }}/v1/contacts/{{ $('Classify upsert').first().json.outcome.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "5735ec46-d1ca-59c9-ae22-8def8ad3dd59",
+      "name": "Check for reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3300,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packDownstream01",
+          "name": "Downstream API token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "325617fa-0e5f-5491-881e-ce348f332756",
+              "leftValue": "={{ $json.stage === 'replied' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f2f85735-9028-5b2c-bcac-ee61db4de589",
+      "name": "Replied?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3520,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "10d59f77-649e-5a79-9b56-c1a55b346c7a",
+              "name": "final_status",
+              "value": "done",
+              "type": "string"
+            },
+            {
+              "id": "7cc8c9d9-e418-55a8-9687-4caf91fd775d",
+              "name": "outcome",
+              "value": "={{ { contact_id: $('Classify upsert').first().json.outcome.id, emails_sent: 1, replied: true } }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fdf9c80e-3cc5-53dd-bd0c-892e16917db5",
+      "name": "Stop: replied",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3740,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $('Settings').first().json.mail_from }}",
+        "toEmail": "={{ $('Validate lead').first().json.lead.email }}",
+        "emailFormat": "text",
+        "options": {
+          "appendAttribution": false
+        },
+        "subject": "Following up on your enquiry",
+        "text": "=Hi {{ $('Validate lead').first().json.lead.first_name }},\n\nJust checking whether you had a chance to read our reply. Answer this email and we will pick it up.\n\nReference: {{ $('Validate lead').first().json.key }}"
+      },
+      "id": "20bd6035-4ec2-51e7-a04b-e668257e146e",
+      "name": "Send follow-up",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        3740,
+        300
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "packSmtpSink0001",
+          "name": "Outgoing mail (SMTP)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $('Settings').first().json.crm_api_url }}/v1/contacts/{{ $('Classify upsert').first().json.outcome.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ stage: 'follow_up_sent' }) }}"
+      },
+      "id": "d8894366-95c0-519b-bc29-a6c2ff17c640",
+      "name": "Mark followed up",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3960,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packDownstream01",
+          "name": "Downstream API token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "304871de-1e19-5d15-81db-09d875737371",
+              "name": "final_status",
+              "value": "done",
+              "type": "string"
+            },
+            {
+              "id": "014274bf-eea1-575e-a110-6f8d67332753",
+              "name": "outcome",
+              "value": "={{ { contact_id: $('Classify upsert').first().json.outcome.id, emails_sent: 2, replied: false } }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "db1f56fd-5f6b-5853-8e8e-c3ea8a608d3f",
+      "name": "Sequence complete",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4180,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE idempotency_keys\n   SET status = $3, outcome = $4::jsonb, updated_at = now()\n WHERE workflow = $1 AND key = $2 AND execution_id = $5\nRETURNING workflow, key, status, attempts, outcome;",
+        "options": {
+          "queryReplacement": "={{ 'lead-follow-up' }},{{ $('Validate lead').first().json.key }},{{ $json.final_status }},{{ JSON.stringify($json.outcome || {}) }},{{ $execution.id }}"
+        }
+      },
+      "id": "8de5474e-95d6-5e18-8d0c-c8005cb3c3b4",
+      "name": "Record outcome",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        4400,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "packLedgerPg0001",
+          "name": "Idempotency ledger (PostgreSQL)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.chat_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ kind: 'run_finished', workflow: $json.workflow, key: $json.key, status: $json.status, attempts: $json.attempts, outcome: $json.outcome, execution_id: $execution.id }) }}"
+      },
+      "id": "41f48af1-3397-525a-a96f-2ac1c57f08a8",
+      "name": "Post run notice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4620,
+        200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packDownstream01",
+          "name": "Downstream API token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Validate lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate lead": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Claim key",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim key": {
+      "main": [
+        [
+          {
+            "node": "First delivery?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First delivery?": {
+      "main": [
+        [
+          {
+            "node": "Accept 202",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Duplicate 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert contact": {
+      "main": [
+        [
+          {
+            "node": "Classify upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify upsert": {
+      "main": [
+        [
+          {
+            "node": "Upsert result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert result": {
+      "main": [
+        [
+          {
+            "node": "New to the sequence?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Back off (upsert)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fail run (upsert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Back off (upsert)": {
+      "main": [
+        [
+          {
+            "node": "Upsert contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accept 202": {
+      "main": [
+        [
+          {
+            "node": "Upsert contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New to the sequence?": {
+      "main": [
+        [
+          {
+            "node": "Send first email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Already in sequence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send first email": {
+      "main": [
+        [
+          {
+            "node": "Mark contacted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark contacted": {
+      "main": [
+        [
+          {
+            "node": "Wait before follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait before follow-up": {
+      "main": [
+        [
+          {
+            "node": "Check for reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for reply": {
+      "main": [
+        [
+          {
+            "node": "Replied?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replied?": {
+      "main": [
+        [
+          {
+            "node": "Stop: replied",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send follow-up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send follow-up": {
+      "main": [
+        [
+          {
+            "node": "Mark followed up",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark followed up": {
+      "main": [
+        [
+          {
+            "node": "Sequence complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already in sequence": {
+      "main": [
+        [
+          {
+            "node": "Record outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stop: replied": {
+      "main": [
+        [
+          {
+            "node": "Record outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sequence complete": {
+      "main": [
+        [
+          {
+            "node": "Record outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record outcome": {
+      "main": [
+        [
+          {
+            "node": "Post run notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "packErrorHandler"
+  },
+  "pinData": {},
+  "tags": []
+}

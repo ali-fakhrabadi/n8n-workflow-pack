@@ -1,0 +1,181 @@
+{
+  "id": "packErrorHandler",
+  "name": "00 Error handler",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Error handler (shared by all three workflows)\nAny failed run lands here. The ledger row of that run is set to **failed**, so a redelivery of the same event runs again instead of being treated as a duplicate. An alert with ids only (workflow, node, execution, key; never the payload) goes to the chat channel.",
+        "width": 900,
+        "height": 200,
+        "color": 7
+      },
+      "id": "88dec484-4472-583e-8e67-a8ef2d2cc35c",
+      "name": "Note: errors",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        80
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "42b93377-cf95-5ebf-a46d-e5f419955b90",
+      "name": "Workflow failed",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f931fde7-7407-557f-860a-a0291c968e36",
+              "name": "chat_url",
+              "value": "http://mock-sinks:8000/chat/messages",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f3fc999e-2438-560c-8970-154c3c7db9d4",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code node \"Error details\" in the error workflow (run once for all items).\n//\n// The Error Trigger hands over the failed execution's metadata. Only identifiers and a short\n// message are kept: no payloads, no personal data. Read from the trigger by name, because the\n// node right before this one is Settings.\nconst TRIGGER_NODE = 'Workflow failed';\nconst input = $(TRIGGER_NODE).first().json || {};\nconst execution = input.execution || {};\nconst workflow = input.workflow || {};\nconst message = String((execution.error && execution.error.message) || 'workflow error')\n  .replace(/\\s+/g, ' ')\n  .slice(0, 300);\nreturn [\n  {\n    json: {\n      execution_id: execution.id !== undefined && execution.id !== null ? String(execution.id) : '',\n      workflow: String(workflow.name || '').slice(0, 120) || null,\n      node: String(execution.lastNodeExecuted || '').slice(0, 120) || null,\n      message,\n    },\n  },\n];\n"
+      },
+      "id": "33082be4-51e1-5e94-a001-3995e3750217",
+      "name": "Error details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE idempotency_keys\n   SET status = 'failed', error = $2, updated_at = now()\n WHERE execution_id = $1 AND status = 'processing'\nRETURNING workflow, key, attempts;",
+        "options": {
+          "queryReplacement": "={{ $json.execution_id }},{{ $json.message }}"
+        }
+      },
+      "id": "b3728f80-9bae-5646-a753-7cf1beaf7561",
+      "name": "Release key",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        660,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "packLedgerPg0001",
+          "name": "Idempotency ledger (PostgreSQL)"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Settings').first().json.chat_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ kind: 'workflow_error', workflow: $('Error details').first().json.workflow, node: $('Error details').first().json.node, execution_id: $('Error details').first().json.execution_id, message: $('Error details').first().json.message, ledger_workflow: $json.workflow || null, key: $json.key || null, released: Boolean($json.key) }) }}"
+      },
+      "id": "bf12651b-ce42-594f-a787-7fefef1b948f",
+      "name": "Send alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        400
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "packDownstream01",
+          "name": "Downstream API token"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Workflow failed": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Error details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error details": {
+      "main": [
+        [
+          {
+            "node": "Release key",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Release key": {
+      "main": [
+        [
+          {
+            "node": "Send alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "executionTimeout": 300
+  },
+  "pinData": {},
+  "tags": []
+}
