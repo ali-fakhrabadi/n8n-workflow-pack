@@ -1,0 +1,13 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM", "RUF", "RET", "ARG"]
+ignore = [
+    "S310", # urllib on fixed URLs inside the internal test network
+    "S104", # the mock services listen on all interfaces of their container
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S311"]
