@@ -1,0 +1,19 @@
+# Optional overlay for looking at a running stack: the n8n editor, Mailpit and the mock-sinks
+# view on 127.0.0.1 only. Published ports need a non-internal network, so this overlay adds one.
+#
+#   HARNESS_KEEP=1 HARNESS_EDITOR=1 tests/harness/run.sh
+#
+# Sign in as owner@example.com with the password in the run's n8n_owner_password secret.
+services:
+  n8n:
+    networks: [pack, editor]
+    ports: ["127.0.0.1:${PACK_EDITOR_PORT:-5678}:5678"]
+  mailpit:
+    networks: [pack, editor]
+    ports: ["127.0.0.1:${PACK_MAILPIT_PORT:-8025}:8025"]
+  mock-sinks:
+    networks: [pack, editor]
+    ports: ["127.0.0.1:${PACK_MOCKS_PORT:-8000}:8000"]
+
+networks:
+  editor: {}

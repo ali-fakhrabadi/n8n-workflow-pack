@@ -1,0 +1,185 @@
+# The workflow pack's stack: n8n 2.45.6 (PostgreSQL database, external task runners), the
+# idempotency ledger, and stand-ins for the outside services (mock-sinks, Mailpit).
+#
+# Used by the test harness (tests/harness/run.sh), which creates throw-away secrets in
+# PACK_SECRETS, replays the recorded events and removes everything. Nothing is published on the
+# host unless compose.editor.yaml is added (editor and mock views on 127.0.0.1 only).
+name: n8n-workflow-pack
+
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+x-n8n-env: &n8n-env
+  DB_TYPE: postgresdb
+  DB_POSTGRESDB_HOST: postgres
+  DB_POSTGRESDB_DATABASE: n8n
+  DB_POSTGRESDB_USER: n8n
+  DB_POSTGRESDB_PASSWORD_FILE: /run/secrets/n8n_db_password
+  N8N_ENCRYPTION_KEY_FILE: /run/secrets/n8n_encryption_key
+  N8N_DIAGNOSTICS_ENABLED: "false"
+  N8N_LOG_LEVEL: warn
+  GENERIC_TIMEZONE: UTC
+
+x-n8n-image: &n8n-image n8nio/n8n:2.45.6@sha256:45edf89655fd66dd55ea9336c1791ad14777599fdbf6c5aec6db583ede99a40b
+
+services:
+  postgres:
+    <<: *hardened
+    image: postgres:17.11-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+    user: "70:70"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password, n8n_db_password, ledger_db_password]
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./setup/postgres-init.sh:/docker-entrypoint-initdb.d/10-init.sh:ro
+      - ./setup/ledger.sql:/opt/pack/ledger.sql:ro
+    tmpfs: ["/var/run/postgresql:uid=70,gid=70,mode=0775", /tmp]
+    networks: [pack]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "automation"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  mock-sinks:
+    <<: *hardened
+    image: python:3.12.15-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
+    user: "65534:65534"
+    command: [python, -u, /mocks/mock_sinks.py]
+    secrets: [downstream_token]
+    volumes:
+      - ./mocks/mock_sinks.py:/mocks/mock_sinks.py:ro
+    networks: [pack]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/_mock/calls')"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mailpit:
+    <<: *hardened
+    image: axllent/mailpit:v1.29.6@sha256:0b5c5f7ffd3c93474baa7fd3869c1462e5a3d03256ed0933dfc0e7d81d794036
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "false"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "false"
+    tmpfs: [/tmp, /data]
+    networks: [pack]
+
+  # One-shot: credentials from secrets, Settings from the environment, import and publish.
+  n8n-setup:
+    <<: *hardened
+    image: *n8n-image
+    entrypoint: [node, /opt/pack/setup.mjs]
+    environment:
+      <<: *n8n-env
+      PACK_APPROVAL_TIMEOUT_S: ${PACK_APPROVAL_TIMEOUT_S:-172800}
+      PACK_FOLLOW_UP_DELAY_S: ${PACK_FOLLOW_UP_DELAY_S:-259200}
+      PACK_MAX_ATTEMPTS: ${PACK_MAX_ATTEMPTS:-4}
+      PACK_RETRY_BASE_S: ${PACK_RETRY_BASE_S:-5}
+      PACK_CLAIM_STALE_AFTER_S: ${PACK_CLAIM_STALE_AFTER_S:-900}
+    secrets: [n8n_db_password, n8n_encryption_key, n8n_owner_password, webhook_token, downstream_token, ledger_db_password]
+    volumes:
+      - n8n-data:/home/node/.n8n
+      - ./workflows:/opt/pack/workflows:ro
+      - ./setup/setup.mjs:/opt/pack/setup.mjs:ro
+    tmpfs: [/tmp, "/home/node/.cache:uid=1000,gid=1000,mode=0700"]
+    networks: [pack]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  n8n:
+    <<: *hardened
+    image: *n8n-image
+    environment:
+      <<: *n8n-env
+      N8N_INSTANCE_OWNER_MANAGED_BY_ENV: "true"
+      N8N_INSTANCE_OWNER_EMAIL: owner@example.com
+      N8N_INSTANCE_OWNER_PASSWORD_HASH_FILE: /home/node/.n8n/pack-owner-password.bcrypt
+      N8N_RUNNERS_MODE: external
+      N8N_RUNNERS_BROKER_LISTEN_ADDRESS: 0.0.0.0
+      N8N_RUNNERS_AUTH_TOKEN_FILE: /run/secrets/n8n_runners_auth_token
+      N8N_SSRF_PROTECTION_ENABLED: "true"
+      N8N_SSRF_ALLOWED_HOSTNAMES: mock-sinks,mailpit
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://n8n:5678/}
+      N8N_SECURE_COOKIE: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_TEMPLATES_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
+      N8N_DISABLED_MODULES: mcp-registry
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "336"
+    secrets: [n8n_db_password, n8n_encryption_key, n8n_runners_auth_token]
+    volumes:
+      - n8n-data:/home/node/.n8n
+    tmpfs: [/tmp, "/home/node/.cache:uid=1000,gid=1000,mode=0700"]
+    networks: [pack]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5678/healthz/readiness"]
+      interval: 2s
+      timeout: 5s
+      retries: 90
+    depends_on:
+      postgres: {condition: service_healthy}
+      n8n-setup: {condition: service_completed_successfully}
+
+  # Runs the Code nodes apart from n8n: no database password, no encryption key.
+  n8n-runners:
+    <<: *hardened
+    image: n8nio/runners:2.45.6@sha256:7b11feb37131eebe8e90585ab562f6a90ed2a6acb956e1e6537fe3885d7957e4
+    command: [javascript]
+    environment:
+      N8N_RUNNERS_TASK_BROKER_URI: http://n8n:5679
+      N8N_RUNNERS_AUTH_TOKEN_FILE: /run/secrets/n8n_runners_auth_token
+    secrets: [n8n_runners_auth_token]
+    volumes:
+      - ./setup/task-runners.json:/etc/n8n-task-runners.json:ro
+    tmpfs: [/tmp, "/home/runner:uid=1000,gid=1000,mode=0700"]
+    networks: [pack]
+    depends_on:
+      n8n: {condition: service_healthy}
+
+  # The replay harness (profile "harness"): sends the recorded events and checks the results.
+  harness:
+    <<: *hardened
+    image: python:3.12.15-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
+    user: "${HARNESS_UID:-1000}:${HARNESS_GID:-1000}"
+    command: [python, -u, /harness/replay.py]
+    environment:
+      HARNESS_OUT: /out
+      HARNESS_EVENTS: /events
+      HARNESS_ONLY: ${HARNESS_ONLY:-}
+      HARNESS_IMPORT_START_MS: ${HARNESS_IMPORT_START_MS:-}
+      HARNESS_READY_MS: ${HARNESS_READY_MS:-}
+      HARNESS_SETUP_DONE: ${HARNESS_SETUP_DONE:-}
+      HARNESS_APPROVAL_TIMEOUT_S: ${PACK_APPROVAL_TIMEOUT_S:-172800}
+      HARNESS_FOLLOW_UP_DELAY_S: ${PACK_FOLLOW_UP_DELAY_S:-259200}
+    secrets: [webhook_token, n8n_owner_password]
+    volumes:
+      - ./tests/harness/replay.py:/harness/replay.py:ro
+      - ./tests/events:/events:ro
+      - ${HARNESS_OUT_DIR:-./tests/harness/out}:/out
+    networks: [pack]
+    profiles: [harness]
+
+volumes:
+  pg-data:
+  n8n-data:
+
+networks:
+  pack:
+    internal: true
+
+secrets:
+  postgres_password: {file: "${PACK_SECRETS:?}/postgres_password"}
+  n8n_db_password: {file: "${PACK_SECRETS:?}/n8n_db_password"}
+  ledger_db_password: {file: "${PACK_SECRETS:?}/ledger_db_password"}
+  n8n_encryption_key: {file: "${PACK_SECRETS:?}/n8n_encryption_key"}
+  n8n_runners_auth_token: {file: "${PACK_SECRETS:?}/n8n_runners_auth_token"}
+  n8n_owner_password: {file: "${PACK_SECRETS:?}/n8n_owner_password"}
+  webhook_token: {file: "${PACK_SECRETS:?}/webhook_token"}
+  downstream_token: {file: "${PACK_SECRETS:?}/downstream_token"}
