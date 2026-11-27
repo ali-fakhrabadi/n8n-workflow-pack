@@ -12,12 +12,19 @@ the harness report, the final ledger, the timing marks and the setup log.
 | [c](run-2026-11-27-c/harness-report.json) | 50 / 50 | 89 | 13 | 46.67 s | 61.01 s | 68.80 s |
 | [d](run-2026-11-27-d/harness-report.json) | 50 / 50 | 89 | 13 | 49.22 s | 62.99 s | 71.06 s |
 
+And the CI run on a GitHub Actions runner (ubuntu-24.04), after the fixes in
+[testing.md](../testing.md#what-the-harness-found):
+
+| Run | Events passed | Webhook deliveries | Approval clicks | Setup done | n8n ready | First successful run |
+|---|---|---|---|---|---|---|
+| [CI](ci-2026-11-27/harness-report.json) | 50 / 50 | 89 | 14 (1 early click repeated) | 21.63 s | 28.29 s | 32.44 s |
+
 Times are measured from the start of the import on an empty n8n database (migrations,
 credentials, workflow import and publish all included). Run d also produced the screenshots
 in [`assets/screenshots/`](../../assets/screenshots). Between runs c and d the synthetic leads
 got names matching their addresses (they were all "Robin Avery" before); nothing else changed.
 
-Duplicate tests, identical in all four runs:
+Duplicate tests, identical in all five runs:
 
 | | Events | Copies sent | Accepted (`202`) | Answered as duplicate (`200`) | Writes |
 |---|---|---|---|---|---|
